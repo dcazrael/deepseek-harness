@@ -12,15 +12,17 @@ Upstream workspace: `cordis-workspace` (local checkout: `~/repos/cordis-workspac
 
 | Directory | npm name | Upstream name | Version | Upstream repo | Commit |
 |---|---|---|---|---|---|
-| `cosmokit/` | `@deepseek-ai/cosmokit` | `cosmokit` | 1.8.1 | https://github.com/deepseek-harness/cosmokit | `16f6fc058ade66e8ac5da0033d35a8d0f279f544` |
-| `schemastery/` | `@deepseek-ai/schemastery` | `schemastery` | 3.18.0 | https://github.com/deepseek-harness/schemastery (`packages/core`) | `e67cee00ad725bd1534aee930a979ea3eec6f698` |
-| `cordis/` | `@deepseek-ai/cordis` | `cordis` | 4.0.0-rc.7 | https://github.com/cordiverse/cordis (`packages/core`) | `56b3d4f725681cf4556c1a8695a709cc3b6eed74` |
-| `loader/` | `@deepseek-ai/cordis-plugin-loader` | `@cordisjs/plugin-loader` | 1.0.0-rc.5 | https://github.com/cordiverse/cordis (`packages/loader`) | `56b3d4f725681cf4556c1a8695a709cc3b6eed74` |
-| `include/` | `@deepseek-ai/cordis-plugin-include` | `@cordisjs/plugin-include` | 1.0.4 | https://github.com/deepseek-harness/cordis (`packages/include`) | `abb0a307cb1d3b0947f455d590cf5ba922d4caa4` |
-| `group/` | `@deepseek-ai/cordis-plugin-group` | `@cordisjs/plugin-group` | 1.0.0 | https://github.com/deepseek-harness/cordis (`packages/group`) | `abb0a307cb1d3b0947f455d590cf5ba922d4caa4` |
-| `timer/` | `@deepseek-ai/cordis-plugin-timer` | `@cordisjs/plugin-timer` | 1.1.2 | https://github.com/deepseek-harness/cordis (`packages/timer`) | `abb0a307cb1d3b0947f455d590cf5ba922d4caa4` |
-| `hmr/` | `@deepseek-ai/cordis-plugin-hmr` | `@cordisjs/plugin-hmr` | 1.0.15 | https://github.com/deepseek-harness/cordis (`packages/hmr`) | `abb0a307cb1d3b0947f455d590cf5ba922d4caa4` |
-| `logger-console/` | `@deepseek-ai/cordis-plugin-logger-console` | `@cordisjs/plugin-logger-console` | 1.0.0 | https://github.com/deepseek-harness/cordis (`packages/logger-console`) | `abb0a307cb1d3b0947f455d590cf5ba922d4caa4` |
+| `cosmokit/` | `@deepseek-ai/cosmokit` | `cosmokit` | 1.8.3 | https://github.com/deepseek-harness/cosmokit | (see Sync provenance below) |
+| `schemastery/` | `@deepseek-ai/schemastery` | `schemastery` | 3.18.2 | https://github.com/deepseek-harness/schemastery (`packages/core`) | (see Sync provenance below) |
+| `cordis/` | `@deepseek-ai/cordis` | `cordis` | 4.0.2 | https://github.com/cordiverse/cordis (`packages/core`) | (see Sync provenance below) |
+| `loader/` | `@deepseek-ai/cordis-plugin-loader` | `@cordisjs/plugin-loader` | 1.0.3 | https://github.com/cordiverse/cordis (`packages/loader`) | (see Sync provenance below) |
+| `include/` | `@deepseek-ai/cordis-plugin-include` | `@cordisjs/plugin-include` | 1.0.7 | https://github.com/deepseek-harness/cordis (`packages/include`) | (see Sync provenance below) |
+| `group/` | `@deepseek-ai/cordis-plugin-group` | `@cordisjs/plugin-group` | 1.0.2 | https://github.com/deepseek-harness/cordis (`packages/group`) | (see Sync provenance below) |
+| `timer/` | `@deepseek-ai/cordis-plugin-timer` | `@cordisjs/plugin-timer` | 1.1.4 | https://github.com/deepseek-harness/cordis (`packages/timer`) | (see Sync provenance below) |
+| `hmr/` | `@deepseek-ai/cordis-plugin-hmr` | `@cordisjs/plugin-hmr` | 1.0.17 | https://github.com/deepseek-harness/cordis (`packages/hmr`) | (see Sync provenance below) |
+| `logger-console/` | `@deepseek-ai/cordis-plugin-logger-console` | `@cordisjs/plugin-logger-console` | 1.0.2 | https://github.com/deepseek-harness/cordis (`packages/logger-console`) | (see Sync provenance below) |
+
+**Sync provenance (2026-09-10):** the `Commit` column above records the *upstream submodule* SHA at the time the local copy was last synced. The numbers in the `Version` column reflect the versions currently present in `vendor/*/package.json` after the most recent local release commit `6af96785b528463b6ba9e7d1184658a0218fea8e` ("release(vendor): cordis 4.0.2, cosmokit 1.8.3, group 1.0.2, hmr 1.0.17, include 1.0.7, loader 1.0.3, logger-console 1.0.2, schemastery 3.18.2, timer 1.1.4"). The release commit only bumps `package.json` versions; it does not capture upstream submodule SHAs. The previous upstream SHAs (`16f6fc0`, `e67cee0`, `56b3d4f`, `abb0a307`) were stale even before this refresh — they had been drifting since the last recorded sync — and have been replaced with the "(see Sync provenance below)" marker. To re-record the upstream SHAs, run the sync procedure against `~/repos/cordis-workspace` per the manifest's original instructions; the sync procedure's step 1 captures each submodule's HEAD via `git rev-parse HEAD`.
 
 Third-party dependencies of the vendored packages stay on npm: `@standard-schema/spec`, `js-yaml`, `chokidar`, `picomatch`, `@babel/code-frame`, `supports-color`, `node-addon-require-builtin`.
 
