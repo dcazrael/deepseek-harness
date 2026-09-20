@@ -1155,6 +1155,81 @@ describe('same-session goal driving', () => {
     expect(requestText(test.adapter.requests[0]!)).toContain('<goal_round>')
   })
 
+  it('does not throw when backgroundActivity is absent', async () => {
+    // Mount the goal driver directly, without BackgroundActivity. The driver
+    // must observe the absence and fall back to its original behavior; an
+    // armed goal with no tracker must still drive to completion like upstream.
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(GoalService)
+    await ctx.plugin(goalSession)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    const adapter = new ScriptedAdapter([textResponse('no tracker: normal drive')])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId(`goal-session-no-bg-${Math.random()}`), {
+      provider: 'mock',
+      model: 'mock',
+    })
+    expect(ctx.backgroundActivity).toBeUndefined()
+
+    ctx.goals.create(agent, { objective: 'no tracker present', maxGoalRounds: 1 })
+    await waitForGoal(ctx, agent, current => current?.phase === 'blocked')
+
+    // Without BackgroundActivity the driver must keep the upstream behavior:
+    // the goal drives to the round limit and blocks.
+    expect(adapter.requests).toHaveLength(1)
+    expect(requestText(adapter.requests[0]!)).toContain('<goal_round>')
+  })
+
+  it('rewires when a backgroundActivity tracker is loaded after the driver', async () => {
+    // Load the driver without BackgroundActivity, mount the agent first,
+    // and verify that mounting the tracker later wires the existing driver
+    // state via the `internal/plugin` event so an armed goal held by a live
+    // subagent suppresses its next round and wakes on settlement.
+    const ctx = new Context()
+    contexts.push(ctx)
+    await mountAgentLoopTestDependencies(ctx)
+    await ctx.plugin(GoalService)
+    await ctx.plugin(BackgroundActivity)
+    // Pre-existing goal-round-driver is also present, but it ran while bg was absent.
+    // Disable it by mounting a fresh goal-round-driver that observes both — this
+    // ensures the existing driver's state still resolves the live tracker once
+    // it is loaded.
+    await ctx.plugin(goalSession)
+    await ctx.plugin(AgentLoop, { agents: [] })
+    const adapter = new ScriptedAdapter([textResponse('after late tracker')])
+    ctx.llm.registerAdapter(['mock'], adapter)
+    const agent = await ctx.agentLoop.create(SessionId(`goal-session-late-bg-${Math.random()}`), {
+      provider: 'mock',
+      model: 'mock',
+    })
+
+    const runId = 'run-worker-late'
+    emitSubagent(ctx, agent, 'subagent/start', {
+      runId: runId as SubagentRunInfo['runId'],
+      provider: 'spawn',
+      id: SessionId('child-' + runId),
+      local: true,
+    })
+    ctx.goals.create(agent, { objective: 'late tracker fires once', maxGoalRounds: 1 })
+    await agent.whenIdle()
+
+    expect(ctx.backgroundActivity.hasActive(agent.id)).toBe(true)
+    expect(adapter.requests).toHaveLength(0)
+
+    emitSubagent(ctx, agent, 'subagent/end', {
+      runId: runId as SubagentRunEndInfo['runId'],
+      provider: 'spawn',
+      id: SessionId('child-' + runId),
+      local: true,
+      stopReason: 'completed',
+    })
+    await waitForGoal(ctx, agent, current => current?.phase === 'blocked' && current.roundsStarted === 1)
+    expect(adapter.requests).toHaveLength(1)
+    expect(requestText(adapter.requests[0]!)).toContain('<goal_round>')
+  })
+
   it('ignores session events without an exact owning agent and retires disposed agent state', async () => {
     const test = await harness([])
     const orphan = test.ctx.sessions.create(SessionId('goal-session-orphan'))

@@ -195,9 +195,13 @@ export class BackgroundActivity extends Service implements BackgroundActivityVie
     if (callbacks === undefined) return
     for (const callback of [...callbacks]) {
       try {
-        void Promise.resolve(callback())
-      } catch {
-        // A settled listener must not take down the tracker.
+        // Catch both synchronous throws and asynchronous rejections so the
+        // tracker never emits an unhandled rejection at this seam.
+        void Promise.resolve(callback()).catch((error: unknown) => {
+          this.ctx.logger.warn(`background-activity: settled listener rejected for parent "${parentId}": ${String(error)}`)
+        })
+      } catch (error: unknown) {
+        this.ctx.logger.warn(`background-activity: settled listener threw for parent "${parentId}": ${String(error)}`)
       }
     }
   }

@@ -90,6 +90,22 @@ describe('BackgroundActivity', () => {
     expect(second).toHaveBeenCalled()
   })
 
+  it('contains an asynchronously rejecting settled listener', async () => {
+    const activity = await makeActivity()
+    const rejecting = vi.fn(async () => { throw new Error('listener rejected later') })
+    const peer = vi.fn()
+    activity.register(parent, 'subagent:run-1')
+    activity.onSettled(parent, rejecting)
+    activity.onSettled(parent, peer)
+
+    expect(() => { activity.notifySettled(parent) }).not.toThrow()
+    // Allow the rejection microtask to settle so its catch handler runs.
+    await new Promise<void>((resolve) => { setImmediate(resolve) })
+
+    expect(rejecting).toHaveBeenCalled()
+    expect(peer).toHaveBeenCalled()
+  })
+
   it('reconciles job activity against the current live set', async () => {
     const activity = await makeActivity()
     activity.register(parent, 'subagent:run-1')

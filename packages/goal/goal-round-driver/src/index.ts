@@ -5,7 +5,7 @@
 
 import { isDeepStrictEqual } from 'node:util'
 import { FiberState } from '@deepseek-ai/cordis'
-import type { Context } from '@deepseek-ai/cordis'
+import type { Context, Fiber } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { BackgroundActivityView } from '@deepseek-ai/dsh-background-activity'
 import type { GoalMessageSource, GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
@@ -44,8 +44,14 @@ interface DriverState {
   requested: boolean
   run: Promise<void> | undefined
   stopping: boolean
-  /** Disposer for the background-activity settled subscription, when mounted. */
+  /**
+   * Disposer for the background-activity settled subscription, when mounted.
+   * Pairs with {@link settledService} so we can detect tracker replacement and
+   * rewire to the live service instead of staying subscribed to a stale one.
+   */
   settled?: () => void
+  /** Identity of the tracker the current `settled` subscription was made on. */
+  settledService?: BackgroundActivityView
 }
 
 /** Whether a source identifies an automatic, positive-numbered goal round. */
@@ -102,14 +108,21 @@ export function apply(ctx: Context): void {
   }
 
   /**
-   * Subscribe once to the last-owned-work settlement so a finished worker
-   * wakes the driver instead of an empty poll. The `background-activity`
-   * tracker is optional; without it the goal loop keeps its old behavior.
+   * Subscribe to the live background-activity tracker so a finished worker
+   * wakes the driver instead of an empty poll. Re-runs whenever the tracker
+   * identity changes (tracker loaded after the driver, tracker reloaded, or
+   * disposed without unmounting the driver), so a goal never stays bound to
+   * a stale service that can no longer fire `onSettled`. Without a tracker
+   * the goal loop keeps its old behavior.
    */
   function wireSettled(state: DriverState): void {
-    if (state.settled !== undefined) return
     const activity = backgroundActivity()
+    if (activity === state.settledService) return
+    state.settled?.()
+    delete state.settled
+    delete state.settledService
     if (activity === undefined) return
+    state.settledService = activity
     state.settled = activity.onSettled(state.agent.id, () => { requestDrive(state) })
   }
 
@@ -282,6 +295,21 @@ export function apply(ctx: Context): void {
       state.competingQueued = false
       state.needsCheckpoint = false
       wireSettled(state)
+    })
+    // Tracker can be loaded after the driver, reloaded, or replaced; each
+    // change must rewire every state so no driver stays bound to a stale
+    // service that can no longer fire `onSettled`.
+    ctx.on('internal/plugin', (fiber: Fiber) => {
+      if (fiber.name !== 'background-activity') return
+      const activity = backgroundActivity()
+      for (const state of states.values()) {
+        if (state.settledService !== undefined && state.settledService !== activity) {
+          state.settled?.()
+          delete state.settled
+          delete state.settledService
+        }
+        if (activity !== undefined) wireSettled(state)
+      }
     })
     ctx.on('agent/status', ({ agent, status }) => {
       const state = stateFor(agent)
