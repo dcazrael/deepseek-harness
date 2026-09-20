@@ -7,6 +7,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { FiberState } from '@deepseek-ai/cordis'
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
+import type { BackgroundActivityView } from '@deepseek-ai/dsh-background-activity'
 import type { GoalMessageSource, GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
@@ -43,6 +44,8 @@ interface DriverState {
   requested: boolean
   run: Promise<void> | undefined
   stopping: boolean
+  /** Disposer for the background-activity settled subscription, when mounted. */
+  settled?: () => void
 }
 
 /** Whether a source identifies an automatic, positive-numbered goal round. */
@@ -91,6 +94,23 @@ export function apply(ctx: Context): void {
     }
     states.set(agent, state)
     return state
+  }
+
+  /** Optional parent-scoped tracker of unresolved background work. */
+  function backgroundActivity(): BackgroundActivityView | undefined {
+    return ctx.get('backgroundActivity')
+  }
+
+  /**
+   * Subscribe once to the last-owned-work settlement so a finished worker
+   * wakes the driver instead of an empty poll. The `background-activity`
+   * tracker is optional; without it the goal loop keeps its old behavior.
+   */
+  function wireSettled(state: DriverState): void {
+    if (state.settled !== undefined) return
+    const activity = backgroundActivity()
+    if (activity === undefined) return
+    state.settled = activity.onSettled(state.agent.id, () => { requestDrive(state) })
   }
 
   /** Read only when the exact Agent remains live. */
@@ -163,6 +183,9 @@ export function apply(ctx: Context): void {
 
     const goal = currentGoal(state)
     if (goal === undefined || goal.phase !== 'active' || goal.activation !== 'armed') return
+    // Leave the goal idle while the parent still owns background work: the
+    // worker's report reaches the inbox and wakes the step fence on settlement.
+    if (backgroundActivity()?.hasActive(agent.id)) return
     if (goal.roundsStarted >= goal.maxGoalRounds) {
       ctx.goals.block(agent, goalRef(goal), {
         code: 'round-limit',
@@ -248,12 +271,17 @@ export function apply(ctx: Context): void {
       disarm(state)
     })
 
-    ctx.on('agent/disposed', ({ agent }) => { states.delete(agent) })
+    ctx.on('agent/disposed', ({ agent }) => {
+      const state = states.get(agent)
+      state?.settled?.()
+      states.delete(agent)
+    })
     ctx.on('agent/created', ({ agent }) => {
       const state = stateFor(agent)
       state.attempt = undefined
       state.competingQueued = false
       state.needsCheckpoint = false
+      wireSettled(state)
     })
     ctx.on('agent/status', ({ agent, status }) => {
       const state = stateFor(agent)
@@ -428,6 +456,7 @@ export function apply(ctx: Context): void {
     // automatic authority from an earlier producer instance.
     for (const agent of ctx.agents.list()) {
       const state = stateFor(agent)
+      wireSettled(state)
       disarm(state)
     }
 
@@ -450,6 +479,7 @@ export function apply(ctx: Context): void {
         if (state.run !== undefined) waits.push(state.run)
       }
       await Promise.allSettled(waits)
+      for (const state of states.values()) state.settled?.()
       states.clear()
     }
   }, 'goal-round-driver lifecycle')

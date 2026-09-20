@@ -9,28 +9,19 @@
   ],
   "references": [
     {
-      "path": "../../../vendor/cosmokit"
-    },
-    {
       "path": "../../../vendor/cordis"
     },
     {
       "path": "../../core/agent"
     },
     {
-      "path": "../goal"
+      "path": "../../core/scope"
     },
     {
-      "path": "../../llm/llm"
+      "path": "../../jobs/jobs"
     },
     {
-      "path": "../../core/session"
-    },
-    {
-      "path": "../../session/background-activity"
-    },
-    {
-      "path": "../../runtime-diagnostics/invariants"
+      "path": "../../subagent/subagent"
     }
   ]
 }

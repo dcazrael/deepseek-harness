@@ -296,6 +296,9 @@
     - id: command-feedback
       name: '@deepseek-ai/dsh-command-feedback'
 
+    - id: background-activity
+      name: '@deepseek-ai/dsh-background-activity'
+
     - id: goal
       name: '@deepseek-ai/dsh-goal'
 

@@ -4,12 +4,15 @@ import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import { agentEvents } from '@deepseek-ai/dsh-agent'
 import AgentLoop from '@deepseek-ai/dsh-agent-loop'
 import { mountAgentLoopTestDependencies } from '@deepseek-ai/dsh-agent-loop-testkit'
+import BackgroundActivity from '@deepseek-ai/dsh-background-activity'
 import GoalService, { GoalId } from '@deepseek-ai/dsh-goal'
 import type { GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage, LlmAdapter, LlmError  } from '@deepseek-ai/dsh-llm'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
 import { SessionId } from '@deepseek-ai/dsh-session'
 import type { UserMessage } from '@deepseek-ai/dsh-session'
+import { scopeTarget } from '@deepseek-ai/dsh-scope'
+import type { SubagentRunEndInfo, SubagentRunInfo } from '@deepseek-ai/dsh-subagent'
 import * as goalSession from '../src/index.ts'
 
 type ScriptEntry = StreamChunk[] | Error | 'hang' | ((options: GenerateOptions) => StreamChunk[])
@@ -90,6 +93,7 @@ async function harness(script: ScriptEntry[]): Promise<Harness> {
   contexts.push(ctx)
   await mountAgentLoopTestDependencies(ctx)
   await ctx.plugin(GoalService)
+  await ctx.plugin(BackgroundActivity)
   const driver = await ctx.plugin(goalSession)
   await ctx.plugin(AgentLoop, { agents: [] })
   const adapter = new ScriptedAdapter(script)
@@ -121,6 +125,19 @@ function onClaimedMessage(
   return ctx.on('agent/inbox/claimed', ({ agent: subject, message }) => {
     if (subject === agent) listener(message)
   })
+}
+
+/** Emit a parent-scoped subagent lifecycle event through the real contract. */
+function emitSubagent(
+  ctx: Context,
+  agent: Agent,
+  name: 'subagent/start' | 'subagent/end',
+  info: SubagentRunInfo | SubagentRunEndInfo,
+): void {
+  const carrier = scopeTarget(agent, agent)
+  for (const callback of ctx.events.dispatch('emit', [carrier, name, info])) {
+    void callback(info)
+  }
 }
 
 /** Await a stable goal projection selected by the caller. */
@@ -1097,6 +1114,45 @@ describe('same-session goal driving', () => {
     expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', roundsStarted: 0 })
     expect(test.adapter.requests).toHaveLength(0)
     expect(test.agent.session.snapshotEvents().some(event => event.type === 'turn/start')).toBe(true)
+  })
+
+  it('suppresses round reservation while the parent owns background work, then drives once on settlement', async () => {
+    const test = await harness([textResponse('after worker settled')])
+    const runId = 'run-worker-1'
+    let settledFired = false
+    test.ctx.backgroundActivity.onSettled(test.agent.id, () => { settledFired = true })
+    emitSubagent(test.ctx, test.agent, 'subagent/start', {
+      runId: runId as SubagentRunInfo['runId'],
+      provider: 'spawn',
+      id: SessionId('child-' + runId),
+      local: true,
+    })
+
+    // An armed goal would otherwise reserve round 1 immediately; the parent's
+    // live worker must suppress that reservation without a competing prompt.
+    test.ctx.goals.create(test.agent, { objective: 'wait for the worker', maxGoalRounds: 1 })
+    await Promise.resolve()
+    await new Promise((resolve) => { setImmediate(resolve) })
+
+    expect(test.ctx.backgroundActivity.hasActive(test.agent.id)).toBe(true)
+    expect(test.ctx.goals.get(test.agent)).toMatchObject({ phase: 'active', roundsStarted: 0 })
+    expect(test.adapter.requests).toHaveLength(0)
+    await test.agent.whenIdle()
+
+    emitSubagent(test.ctx, test.agent, 'subagent/end', {
+      runId: runId as SubagentRunEndInfo['runId'],
+      provider: 'spawn',
+      id: SessionId('child-' + runId),
+      local: true,
+      stopReason: 'completed',
+    })
+    expect(test.ctx.backgroundActivity.hasActive(test.agent.id)).toBe(false)
+    expect(settledFired).toBe(true)
+
+    const goal = await waitForGoal(test.ctx, test.agent, current => current?.phase === 'blocked')
+    expect(goal?.roundsStarted).toBe(1)
+    expect(test.adapter.requests).toHaveLength(1)
+    expect(requestText(test.adapter.requests[0]!)).toContain('<goal_round>')
   })
 
   it('ignores session events without an exact owning agent and retires disposed agent state', async () => {
