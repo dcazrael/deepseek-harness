@@ -1183,19 +1183,15 @@ describe('same-session goal driving', () => {
   })
 
   it('rewires when a backgroundActivity tracker is loaded after the driver', async () => {
-    // Load the driver without BackgroundActivity, mount the agent first,
-    // and verify that mounting the tracker later wires the existing driver
-    // state via the `internal/plugin` event so an armed goal held by a live
-    // subagent suppresses its next round and wakes on settlement.
+    // Mount the driver without BackgroundActivity: the driver runs in its
+    // pre-suppression mode and cannot observe a live worker. Mounting the
+    // tracker afterwards must reach the existing driver state through the
+    // `internal/plugin` event so a goal held by a live subagent suppresses its
+    // next round and wakes on settlement.
     const ctx = new Context()
     contexts.push(ctx)
     await mountAgentLoopTestDependencies(ctx)
     await ctx.plugin(GoalService)
-    await ctx.plugin(BackgroundActivity)
-    // Pre-existing goal-round-driver is also present, but it ran while bg was absent.
-    // Disable it by mounting a fresh goal-round-driver that observes both — this
-    // ensures the existing driver's state still resolves the live tracker once
-    // it is loaded.
     await ctx.plugin(goalSession)
     await ctx.plugin(AgentLoop, { agents: [] })
     const adapter = new ScriptedAdapter([textResponse('after late tracker')])
@@ -1204,6 +1200,11 @@ describe('same-session goal driving', () => {
       provider: 'mock',
       model: 'mock',
     })
+    expect(ctx.backgroundActivity).toBeUndefined()
+
+    // Now mount the tracker. The driver must rebind through `internal/plugin`.
+    await ctx.plugin(BackgroundActivity)
+    expect(ctx.backgroundActivity).toBeDefined()
 
     const runId = 'run-worker-late'
     emitSubagent(ctx, agent, 'subagent/start', {

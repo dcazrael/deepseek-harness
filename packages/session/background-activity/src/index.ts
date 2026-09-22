@@ -62,6 +62,8 @@ export class BackgroundActivity extends Service implements BackgroundActivityVie
   private readonly active = new Map<string, Set<string>>()
   private readonly settled = new Map<string, Set<BackgroundWorkSettledListener>>()
   private readonly agentScopes = new Map<string, Scope>()
+  /** Disposer for the jobs subscription released on service disposal. */
+  private unsubscribeJobs: (() => void) | undefined
 
   constructor(ctx: Context) {
     super(ctx, 'backgroundActivity')
@@ -115,7 +117,10 @@ export class BackgroundActivity extends Service implements BackgroundActivityVie
 
     if (jobs !== undefined) {
       // Registered from this unscoped host context, so it sees every owner.
-      jobs.onJobsChanged(reconcileJobs)
+      // The disposer is retained so plugin disposal/reload fully releases the
+      // subscription; otherwise the Jobs service keeps a reference that
+      // continues mutating this tracker after teardown.
+      this.unsubscribeJobs = jobs.onJobsChanged(reconcileJobs)
     }
 
     const dispose = (): void => { this.dispose() }
@@ -220,6 +225,11 @@ export class BackgroundActivity extends Service implements BackgroundActivityVie
 
   /** Dispose per-agent scopes and all retained state (service teardown). */
   dispose(): void {
+    // Release the jobs subscription first so the Jobs service does not keep
+    // invoking a disposed tracker; a leaked listener would also retain this
+    // service reference past the host fiber lifecycle.
+    this.unsubscribeJobs?.()
+    this.unsubscribeJobs = undefined
     for (const scope of this.agentScopes.values()) void scope.dispose()
     this.agentScopes.clear()
     this.close()

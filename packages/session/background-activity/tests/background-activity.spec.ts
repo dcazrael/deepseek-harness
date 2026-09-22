@@ -124,6 +124,27 @@ describe('BackgroundActivity', () => {
     expect(activity.unregister(parent, 'subagent:run-1')).toBe(true)
   })
 
+  it('releases the jobs subscription on service disposal', async () => {
+    const unsubscribe = vi.fn()
+    const onJobsChanged = vi.fn(() => unsubscribe)
+    ctx = new Context()
+    Object.defineProperty(ctx, 'get', {
+      value: (name: string) => (name === 'jobs' ? { onJobsChanged, list: () => [] } : undefined),
+    })
+    // Required base service for the super() constructor; not exercised here.
+    await ctx.plugin(AgentRegistry)
+    const activity = new BackgroundActivity(ctx)
+    expect(onJobsChanged).toHaveBeenCalledTimes(1)
+    expect(unsubscribe).not.toHaveBeenCalled()
+
+    activity.dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+
+    // A second disposal is a no-op rather than invoking the released disposer twice.
+    activity.dispose()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
+
   it('purges a parent and closes all state', async () => {
     const activity = await makeActivity()
     activity.register(parent, 'subagent:run-1')

@@ -5,12 +5,15 @@
 
 import { isDeepStrictEqual } from 'node:util'
 import { FiberState } from '@deepseek-ai/cordis'
-import type { Context, Fiber } from '@deepseek-ai/cordis'
+import type { Context } from '@deepseek-ai/cordis'
 import type { Agent, PreStepDecision } from '@deepseek-ai/dsh-agent'
 import type { BackgroundActivityView } from '@deepseek-ai/dsh-background-activity'
 import type { GoalMessageSource, GoalRef, GoalView } from '@deepseek-ai/dsh-goal'
 import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import type { ContentBlock, MessageId, MessageSource } from '@deepseek-ai/dsh-llm'
+
+/** Service name registered by `BackgroundActivity` via `ctx.plugin(BackgroundActivity)`. */
+const BACKGROUND_ACTIVITY_SERVICE = 'backgroundActivity'
 import type { Session, SessionEvent, UserMessage } from '@deepseek-ai/dsh-session'
 import { renderGoalRoundPrompt } from './prompt.ts'
 
@@ -298,9 +301,12 @@ export function apply(ctx: Context): void {
     })
     // Tracker can be loaded after the driver, reloaded, or replaced; each
     // change must rewire every state so no driver stays bound to a stale
-    // service that can no longer fire `onSettled`.
-    ctx.on('internal/plugin', (fiber: Fiber) => {
-      if (fiber.name !== 'background-activity') return
+    // service that can no longer fire `onSettled`. The rewire must run for
+    // every `internal/service` event for `backgroundActivity`, since that is
+    // the event emitted when the service becomes visible to other fibers —
+    // using `internal/plugin` alone fires too early (PENDING-state listeners
+    // see `ctx.get(name)` return `undefined` until the new fiber activates).
+    const rewireAll = (): void => {
       const activity = backgroundActivity()
       for (const state of states.values()) {
         if (state.settledService !== undefined && state.settledService !== activity) {
@@ -310,7 +316,15 @@ export function apply(ctx: Context): void {
         }
         if (activity !== undefined) wireSettled(state)
       }
+    }
+    ctx.on('internal/service', (name: string) => {
+      if (name === BACKGROUND_ACTIVITY_SERVICE) rewireAll()
     })
+    // The tracker may already be live when the driver mounts; in that case
+    // the `internal/service` event for `backgroundActivity` already fired
+    // before this listener registered, so a one-shot reconcile ensures every
+    // state picks up the live service on driver startup.
+    rewireAll()
     ctx.on('agent/status', ({ agent, status }) => {
       const state = stateFor(agent)
       if (status === 'idle') {
