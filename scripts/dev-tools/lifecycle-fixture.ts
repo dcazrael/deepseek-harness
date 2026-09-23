@@ -240,7 +240,14 @@ async function runS6(): Promise<Summary> {
   const Jobs = (await import('@deepseek-ai/dsh-jobs-local')).default
   await ctx.plugin(Jobs)
   const { agent, adapter, setT0 } = await makeAgent(ctx, 'goal-round-1')
-  const jobs = ctx.get('jobs')
+  // The jobs service is provided by the plugin above; this minimal fixture
+  // uses a structural cast to avoid pulling in the full jobs types in the
+  // dev tool, which only needs attachController + start.
+  interface JobsRegistry {
+    attachController(name: string): () => void
+    start(spec: unknown): unknown
+  }
+  const jobs = ctx.get('jobs') as JobsRegistry
   jobs.attachController('s6-fixture-controller')
   let release!: () => void
   const done = new Promise<void>((resolve) => { release = resolve })
