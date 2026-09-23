@@ -219,7 +219,7 @@ async function runS5(): Promise<Summary> {
   // NOT release suppression yet.
   await child1Promise
   await delay(500)
-  const midHasActive = ctx.get('backgroundActivity').hasActive(agent.id)
+  const midHasActive = bgHasActive(ctx, agent)
   const midRequests = adapter.requests.length
   record.push({ at: Date.now() - setT0, kind: 's5-mid-after-first-settle', payload: { midHasActive, midRequests } })
   await child2Promise
@@ -233,6 +233,13 @@ async function runS5(): Promise<Summary> {
     finalRequests: adapter.requests.length,
     finalPhase: finalGoal?.phase,
   })
+}
+
+function bgHasActive(ctx: Context, agent: Agent): boolean {
+  // The BackgroundActivity service is loaded by bootComposition above; the
+  // cast focuses this dev tool on the public surface we use.
+  const bg = ctx.get('backgroundActivity') as unknown as { hasActive: (id: string) => boolean }
+  return bg.hasActive(agent.id)
 }
 
 async function runS6(): Promise<Summary> {
@@ -265,7 +272,7 @@ async function runS6(): Promise<Summary> {
   ctx.goals.create(agent, { objective: 'wait', maxGoalRounds: 2 })
   await agent.whenIdle()
   const midRounds = ctx.goals.get(agent)?.roundsStarted ?? -1
-  const midHasActive = ctx.get('backgroundActivity').hasActive(agent.id)
+  const midHasActive = bgHasActive(ctx, agent)
   const midRequests = adapter.requests.length
   record.push({ at: Date.now() - setT0, kind: 's6-mid-with-job', payload: { rounds: midRounds, midHasActive, midRequests } })
   release()
@@ -276,7 +283,7 @@ async function runS6(): Promise<Summary> {
   const finalGoal = ctx.goals.get(agent)
   await ctx.fiber.dispose()
   return buildSummary('S6', record, {
-    jobId: jobHandle.toString(),
+    jobId: String(jobHandle),
     midRounds, midHasActive, midRequests,
     finalRoundsStarted: finalGoal?.roundsStarted ?? -1,
     finalRequests: adapter.requests.length,
