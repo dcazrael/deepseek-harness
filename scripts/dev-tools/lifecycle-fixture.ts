@@ -46,7 +46,6 @@ import type {
 import * as goalSession from '../../packages/goal/goal-round-driver/src/index.ts'
 import {
   LlmAdapter,
-  createUserMessage,
   type GenerateOptions,
   type StreamChunk,
 } from '@deepseek-ai/dsh-llm'
@@ -121,22 +120,10 @@ async function makeAgent(ctx: Context, scriptedReply: string): Promise<{ agent: 
 }
 
 /**
- * Poll for `phase === 'blocked'` while the goal stays armed (i.e. blocks
- * only on round-limit, queue failure, or model-initiated pause/etc.).
- * The setTimeout-based polling is intentionally cheap and avoids racing
- * the agent-loop's settlement of the goal service's projection fold.
+ * Poll until the goal's `roundsStarted` reaches `target`. The testbed's
+ * `agent.whenIdle()` returns before the goal driver schedules its async
+ * drive, so polling is the only way to observe the settlement.
  */
-async function waitForBlockedGoal(ctx: Context, agent: Agent, timeoutMs = 30_000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs
-  while (Date.now() < deadline) {
-    const goal = ctx.goals.get(agent)
-    if (goal?.phase === 'blocked') return true
-    if (goal?.phase === 'complete') return true
-    await delay(100)
-  }
-  return ctx.goals.get(agent)?.phase === 'blocked' || ctx.goals.get(agent)?.phase === 'complete'
-}
-
 async function waitForRoundCount(ctx: Context, agent: Agent, target: number, timeoutMs = 30_000): Promise<boolean> {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
@@ -172,34 +159,6 @@ async function runS2(): Promise<Summary> {
   await ctx.fiber.dispose()
   return buildSummary('S2', record, {
     midDuringChild: { rounds: midRounds, hasActive: midHasActive, requests: midRequests },
-    finalRoundsStarted: finalGoal?.roundsStarted ?? -1,
-    finalRequests: adapter.requests.length,
-    finalPhase: finalGoal?.phase,
-  })
-}
-
-async function runS3(): Promise<Summary> {
-  const { ctx, record } = await bootComposition()
-  const { agent, adapter, setT0 } = await makeAgent(ctx, 'goal-round-1')
-  const childA = emitLifecycleChild(ctx, agent, 5_000, 's3-child', setT0, record)
-  await delay(200)
-  ctx.goals.create(agent, { objective: 'wait', maxGoalRounds: 2 })
-  await agent.whenIdle()
-  const beforeFollowRounds = ctx.goals.get(agent)?.roundsStarted ?? -1
-  const beforeFollowReqs = adapter.requests.length
-  // Mid-run followup: the user message must be admitted without piggybacking
-  // a goal round on top of suppression.
-  agent.followup(createUserMessage({ content: [{ type: 'text', text: 'mid-prompt' }], source: { kind: 'user' } }))
-  await agent.whenIdle()
-  const afterFollowRounds = ctx.goals.get(agent)?.roundsStarted ?? -1
-  const afterFollowReqs = adapter.requests.length
-  await childA
-  await waitForRoundCount(ctx, agent, 1)
-  await delay(500)
-  const finalGoal = ctx.goals.get(agent)
-  await ctx.fiber.dispose()
-  return buildSummary('S3', record, {
-    beforeFollowRounds, afterFollowRounds, beforeFollowReqs, afterFollowReqs,
     finalRoundsStarted: finalGoal?.roundsStarted ?? -1,
     finalRequests: adapter.requests.length,
     finalPhase: finalGoal?.phase,
