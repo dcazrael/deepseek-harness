@@ -57,7 +57,7 @@ class ScriptedAdapter extends LlmAdapter {
   }
   override async * stream(_options: GenerateOptions): AsyncIterable<StreamChunk> {
     this.requests.push(_options)
-    yield { type: 'text', text: this.script.shift() ?? 'no-scripted-reply' }
+    yield { type: 'text-delta', text: this.script.shift() ?? 'no-scripted-reply' } as unknown as StreamChunk
   }
 }
 
@@ -147,7 +147,7 @@ async function runS2(): Promise<Summary> {
   ctx.goals.create(agent, { objective: 'wait', maxGoalRounds: 2 })
   await agent.whenIdle()
   const midRounds = ctx.goals.get(agent)?.roundsStarted ?? -1
-  const midHasActive = ctx.get('backgroundActivity').hasActive(agent.id)
+  const midHasActive = bgHasActive(ctx, agent)
   const midRequests = adapter.requests.length
   record.push({ at: Date.now() - setT0, kind: 'snapshot-during-child', payload: { rounds: midRounds, hasActive: midHasActive, requests: midRequests } })
   await childPromise
