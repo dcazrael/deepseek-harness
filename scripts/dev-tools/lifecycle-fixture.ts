@@ -15,7 +15,9 @@
  * call, so parent, user, goal, completion-inbox and child requests are counted
  * independently of arrival order.
  *
- * Scenarios, matching the plan's Task 1 runtime matrix:
+ * Scenarios, matching the plan's Task 1 runtime matrix. M1, M2 and M3 share one
+ * composition because they are one lifecycle observed at three moments; the
+ * other rows are separate compositions:
  *   M1 — a real background child stays unresolved for at least 60 seconds under
  *        an idle armed parent: no automatic reservation, no parent model call.
  *   M2 — a user message reaches that live parent without an empty goal round.
@@ -29,9 +31,12 @@
  *   M8 — an absent tracker and a present-but-idle tracker are measured apart.
  *   M9 — the ordinary goal baseline: drive, pause, resume.
  *
- * Run with `pnpm exec tsx scripts/dev-tools/lifecycle-fixture.ts`. Every failed
- * assertion and every bounded-wait timeout is reported and exits nonzero; each
- * scenario releases its composition in a `finally`.
+ * Run with `pnpm exec tsx scripts/dev-tools/lifecycle-fixture.ts`; `--debug` traces
+ * every model request and scenario boundary. `DSH_FIXTURE_ONLY=<substring>` runs
+ * a subset, and `DSH_FIXTURE_WINDOW_MS` shortens the live-child window while
+ * iterating; the recorded run uses the 60 000 ms default. Every failed assertion
+ * and every bounded-wait timeout is reported and exits nonzero; each scenario
+ * releases its composition in a `finally`.
  *
  * @module scripts/dev-tools/lifecycle-fixture
  */
