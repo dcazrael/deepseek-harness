@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 
 ## Summary
 
-Use `dsh-background-activity` to answer a simple question: does a parent agent still own any subagent run or job that started under its session id? Consumers subscribe to the moment the parent's last owned activity settles, without depending on which worker implementation produced the work. The scheduler uses this signal to suppress its automatic goal-round reservation while a live child or job holds the parent, and to wake the driver once at the final settlement.
+Use `dsh-background-activity` to answer one question: does a parent agent still own any subagent run or job started under its session id? Consumers subscribe to the moment the parent's last owned activity settles, without depending on which worker produced the work. The scheduler uses that signal to suppress its automatic goal-round reservation while a live child or job holds the parent, and to wake the driver once at final settlement. Start and job-change notifications are one-shot, so a tracker that loads or reloads over existing work adopts it rather than reporting a quiescent parent.
 
 ## Table of Contents
 
@@ -69,7 +69,7 @@ This section explains the tracker's data shape and lifecycle seams; the observab
 
 ### Design concept
 
-Each owned activity occupies one slot in a per-parent set, identified by `'subagent:<runId>'` or `'job:<jobId>'`. Parallel starts and settlements cannot desynchronize a counter, because there is no counter — every slot is independent. The set-keyed approach handles the corner cases a counter cannot: a run that completes before its peer arrives, a job removed while subagents remain, or a settlement notification for a key the tracker already dropped.
+Each owned activity occupies one slot in a per-parent set, identified by `'subagent:<childSessionId>'` or `'job:<jobId>'`. Parallel starts and settlements cannot desynchronize a counter, because there is no counter — every slot is independent. The set-keyed approach handles the corner cases a counter cannot: a run that completes before its peer arrives, a job removed while subagents remain, or a settlement notification for a key the tracker already dropped. A subagent slot is keyed by the child session id rather than the run id so that an adopted child and its own terminal event name the same slot, and a continuable child's later epochs reuse it.
 
 ### Source map
 
@@ -80,9 +80,10 @@ Each owned activity occupies one slot in a per-parent set, identified by `'subag
 ### Lifecycle seams
 
 - **Per-agent scopes** — `createScope(ctx, agent)` mints a scope per agent and `subagent/start` and `subagent/end` listeners record activity transitions; the scope is disposed on `agent/disposed` and its state is purged.
-- **Optional Jobs integration** — when `ctx.get('jobs')` returns a registry, the plugin subscribes to `onJobsChanged`, diffs the live owner-scoped set against the parent's stored jobs, and fires settled only when the parent's set empties; the disposer is released on plugin disposal so a reloaded tracker does not retain a stale listener.
-- **Mounted-over-existing agents** — the constructor iterates `ctx.agents.list()` and seeds live work so the tracker observes agents created before the plugin loaded.
-- **Disposal** — the effects-attached cleanup disposes every agent scope, releases the jobs subscription, and clears retained activity and settled state; calling `dispose()` twice is a no-op.
+- **Adoption on attach** — `attach` seeds both sources for a parent it has just started observing: the children the agents registry still reports as runtime-owned by that parent and still unresolved, and the bound registry's live owner-scoped jobs. A child counts as unresolved while it is running or while its inbox holds work; a child that answered and only awaits its owner's disposal does not.
+- **Optional Jobs integration** — `ctx.inject(['jobs'], …)` binds whichever registry is live rather than the one present at construction. Cordis re-runs that callback for every registry a load or reload provides and unwinds its effects before each swap, so the `onJobsChanged` subscription and the retained job slots always belong to the registry that is serving. Leaving a registry drops that owner's job slots and notifies the parents whose last job was one of them, because the unloaded registry can no longer report those settlements.
+- **Mounted-over-existing agents** — the constructor iterates `ctx.agents.list()`, so the tracker observes agents created before the plugin loaded.
+- **Disposal** — the effects-attached cleanup disposes the jobs binding fiber and every agent scope, then clears retained activity and settled state; calling `dispose()` twice is a no-op.
 
 ### Settled dispatch containment
 
@@ -127,6 +128,7 @@ None. The package never participates in a model request, so it never influences 
 These limits define what the tracker describes and when it is absent. They are current package constraints.
 
 - **Optional services mean optional inputs** — a composition without `ctx.jobs` still tracks subagent work but never reconciles jobs, and the goal driver cannot suppress rounds for jobs that ran without joining this scope.
+- **Adoption sees in-process children only** — a run is recoverable after a reload only while the agents registry still owns a live child for it, which covers the in-process one-shot and continuable providers. A provider that runs its child outside this process holds no registry entry, so a tracker that loads after that start cannot adopt it and the goal driver may reserve a round for that interval.
 - **Whole-set queries only** — `hasActive` returns a boolean for a parent id; a consumer that needs to enumerate the live activity ids must record them itself or extend `BackgroundActivityView`.
 - **Listeners fire per settle, not per start** — the public contract is the empty transition, so a consumer that wants start-notifications must register its own listeners on the relevant subagent and jobs events.
 
@@ -136,6 +138,8 @@ These limits define what the tracker describes and when it is absent. They are c
 <details>
 <summary>Working context for maintainers — click to expand</summary>
 
-When the scheduler patch `worker-profiles/0-alpha2-compat` adds `ctx.backgroundActivity` to a host, the goal-round-driver subscribes via `ctx.on('internal/service', ...)` rather than `internal/plugin` so the rebind runs once the service is visible to other fibers, not while the new fiber is still PENDING. The tracker retains no state across reloads: a `dispose()` clears every per-parent set and releases the jobs subscription so the Jobs service does not retain a reference past teardown.
+When the scheduler patch `worker-profiles/0-alpha2-compat` adds `ctx.backgroundActivity` to a host, the goal-round-driver subscribes via `ctx.on('internal/service', ...)` rather than `internal/plugin` so the rebind runs once the service is visible to other fibers, not while the new fiber is still PENDING. A tracker instance retains no state across reloads, and the next instance rebuilds its picture from the runtime rather than from the previous one: it adopts the children the agents registry still owns and the jobs the bound registry still lists, so a reload in the middle of live work neither drops the suppression nor leaves a parent waiting on a settlement that already happened.
+
+Cordis activates an injected dependency on a microtask, so a composition that starts a job in the same tick as the tracker's load settles after the binding. `scripts/dev-tools/lifecycle-fixture.ts` exercises the real subagent runtime, jobs registry, goal service and driver together; its runtime-matrix scenarios are the acceptance evidence for these seams.
 
 </details>

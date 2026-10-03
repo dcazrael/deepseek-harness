@@ -9,7 +9,7 @@ kind: "package-reference"
 
 ## 摘要
 
-`dsh-background-activity` 回答一个简单问题：父 agent 是否还拥有由其 session id 启动的仍在运行的 subagent 或 job。消费者订阅“父代的最后一个 activity 沉降”这一时刻，而不依赖于具体 worker 的实现。scheduler 用该信号在父代仍持有活子任务时阻塞其自动目标轮次（goal-round），并在最终沉降时一次性唤醒驱动。
+`dsh-background-activity` 回答一个问题：父 agent 是否还拥有由其 session id 启动的仍在运行的 subagent 或 job。消费者订阅“父代的最后一个 activity 沉降”这一时刻，而不依赖于具体 worker 的实现。scheduler 用该信号在父代仍持有活子任务时阻塞其自动目标轮次（goal-round），并在最终沉降时一次性唤醒驱动。由于 start 与 job 变化通知都只发生一次，在已有 work 的组合上加载或重新加载 tracker 时，它会接管这些 work（存活子任务取自 agents registry，存活 job 取自已绑定 registry），而不是把父代报告为静止。
 
 ## 目录
 
@@ -69,7 +69,7 @@ kind: "package-reference"
 
 ### 设计思路
 
-每个 owned activity 在父代集合中占据一个槽位，标识符为 `'subagent:<runId>'` 或 `'job:<jobId>'`。并行启动与结算不会让一个计数器失去同步，因为根本不存在计数器——每个槽位都是独立的。基于键的集合解决了计数器无法处理的边界情况：在同伴到达之前已经完成的 run、在 subagent 仍在时删除的 job、或者针对 tracker 已丢弃键的结算通知。
+每个 owned activity 在父代集合中占据一个槽位，标识符为 `'subagent:<childSessionId>'` 或 `'job:<jobId>'`。并行启动与结算不会让一个计数器失去同步，因为根本不存在计数器——每个槽位都是独立的。基于键的集合解决了计数器无法处理的边界情况：在同伴到达之前已经完成的 run、在 subagent 仍在时删除的 job、或者针对 tracker 已丢弃键的结算通知。subagent 槽位以子会话 id 而非 run id 为键，这样被接管的子任务与它自己的终止事件指向同一个槽位，continuable 子任务后续的 epoch 也能复用它。
 
 ### 源码索引
 
@@ -80,9 +80,10 @@ kind: "package-reference"
 ### 生命周期边界
 
 - **每个 agent 的 scope** — `createScope(ctx, agent)` 为每个 agent 创建一个 scope，并注册 `subagent/start` 与 `subagent/end` 监听，记录 activity 转换；在 `agent/disposed` 上释放 scope 并清空其状态。
-- **可选 Jobs 集成** — 当 `ctx.get('jobs')` 返回 registry 时，订阅 `onJobsChanged`，将 owner-scoped live 集合与父代 store 中的 jobs 做 diff，并在父代集合清空时触发 settled；disposer 在插件 dispose 时释放，保证 reload 不会持有陈旧订阅。
-- **Mounted-over-existing agents** — 构造函数遍历 `ctx.agents.list()` 并 seed 现存活工作，保证 tracker 可以观察到先于插件被创建的 agent。
-- **Disposal** — effects-attached 清理会释放每个 agent 的 scope、释放 jobs 订阅、并清空保留的 activity 与 settled 状态；连续两次调用 `dispose()` 是空操作。
+- **attach 时的接管** — `attach` 会为刚开始观察的父代 seed 两个来源：agents registry 仍然报告为该父代 runtime 所有、且仍未完成的子任务，以及已绑定 registry 中该 owner 的存活 jobs。子任务在运行中、或 inbox 中仍有待处理工作时算作未完成；已经回答、只是在等待其持有者释放的子任务不算。
+- **可选 Jobs 集成** — `ctx.inject(['jobs'], …)` 绑定当前存活的 registry，而不是构造时恰好存在的那一个。Cordis 会为每次加载或 reload 提供的 registry 重新运行该回调，并在每次替换前卸载其 effects，因此 `onJobsChanged` 订阅与保留的 job 槽位始终属于正在服务的那个 registry。registry 离开时，会丢弃其 owner 的 job 槽位，并通知最后一个 job 正是这些槽位的父代，因为已卸载的 registry 无法再上报这些结算。
+- **Mounted-over-existing agents** — 构造函数遍历 `ctx.agents.list()`，因此 tracker 能观察到先于插件被创建的 agent。
+- **Disposal** — effects-attached 清理会释放 jobs 绑定 fiber 与每个 agent 的 scope，然后清空保留的 activity 与 settled 状态；连续两次调用 `dispose()` 是空操作。
 
 ### settled 调度的容错
 
@@ -129,6 +130,7 @@ Tracker 仅观察 worker；它从不组装或发送 provider 请求。父代目�
 这些限制定义了 tracker 所描述的内容以及它缺席时的行为。它们是当前包的约束。
 
 - **可选服务意味着可选输入** — 不含 `ctx.jobs` 的组合仍可追踪 subagent work，但永远不会调和 jobs，并且 goal driver 无法压制未加入本作用域的 jobs 触发的 round。
+- **接管只能看到进程内子任务** — reload 之后只有在 agents registry 仍拥有该 run 的存活子任务时才能恢复它，这覆盖进程内 one-shot 与 continuable provider。在本进程之外运行子任务的 provider 不持有 registry 条目，因此在该 start 之后才加载的 tracker 无法接管它，goal driver 可能在那个区间预订一轮。
 - **只提供集合级查询** — `hasActive` 对一个父代 id 返回布尔值；需要枚举 live activity id 的消费者必须自行记录它们，或扩展 `BackgroundActivityView`。
 - **监听器按 settle 触发，不按 start 触发** — 公共契约是清空转换，因此希望收到 start 通知的消费者必须自己注册 subagent 与 jobs 事件。
 
@@ -138,6 +140,8 @@ Tracker 仅观察 worker；它从不组装或发送 provider 请求。父代目�
 <details>
 <summary>面向维护者的工作上下文——点击展开</summary>
 
-当 scheduler 补丁 `worker-profiles/0-alpha2-compat` 在 host 上添加 `ctx.backgroundActivity` 时，goal-round-driver 订阅的是 `ctx.on('internal/service', ...)` 而不是 `internal/plugin`，因此 rebind 运行在新 service 对其它 fiber 可见的时刻，而不是新 fiber 仍处 PENDING 的时刻。Tracker 在 reload 之间不保留状态：`dispose()` 会清空每个父代的集合并释放 jobs 订阅，确保 Jobs 服务不会跨 teardown 持有引用。
+当 scheduler 补丁 `worker-profiles/0-alpha2-compat` 在 host 上添加 `ctx.backgroundActivity` 时，goal-round-driver 订阅的是 `ctx.on('internal/service', ...)` 而不是 `internal/plugin`，因此 rebind 运行在新 service 对其它 fiber 可见的时刻，而不是新 fiber 仍处 PENDING 的时刻。单个 tracker 实例在 reload 之间不保留状态，下一个实例从 runtime 而不是从前一个实例重建自己的视图：它接管 agents registry 仍然拥有的子任务，以及已绑定 registry 仍然列出的 jobs，因此在 live work 中途 reload 既不会丢掉压制，也不会让父代等待一个已经发生的结算。
+
+Cordis 在一个微任务内激活注入的依赖，因此与 tracker 加载处于同一 tick 的组合中启动的 job 会在绑定之后才结算。`scripts/dev-tools/lifecycle-fixture.ts` 把真实的 subagent runtime、jobs registry、goal 服务与驱动组合在一起运行；它的 runtime 矩阵场景就是这些边界的验收证据。
 
 </details>

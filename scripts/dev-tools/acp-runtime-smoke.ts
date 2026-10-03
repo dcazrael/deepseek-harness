@@ -1,20 +1,18 @@
-// Final ACP smoke matrix for Task 0.
+// ACP composition smoke for Task 0.
 //
-// This script composes against the alpha.2-plus-patch dsh build, drives one
-// real ACP session through one user prompt, and records:
+// This script composes against the alpha.2-plus-patch dsh build through the
+// disposable profile, drives one real ACP session through one user prompt, and
+// records:
 //   - which plugins loaded (composition dump);
-//   - that the local model responds (real LLM call with the Qwen NVFP4 model);
-//   - that the goal-driver and background-activity providers participate in
-//     the same composition (provider names show up in the dump);
-//   - the timeline for the session including tool-call lifecycle, so the
-//     downstream settlement path is observable.
+//   - whether the configured local model route answers, with the model id the
+//     endpoint actually served;
+//   - that the goal-round driver and the background-activity tracker are part
+//     of that same composition (both names appear in the dump);
+//   - the session timeline including tool-call lifecycle.
 //
-// The plan's 60-second idle-parent goal matrix requires real subagents or real
-// owner-bound Jobs, which depend on a sandboxable tool (bwrap) the harness
-// integrates with. bwrap is installed on this host but ENOENTs when spawned
-// from inside the dsh child process; that is the local environment's runtime
-// limit, not a Task 0 patch defect. The smoke records the limit here so an
-// Astra review can call it out explicitly.
+// It is a composition and model smoke, not the goal-scheduler matrix: the
+// matrix scenarios (real child held unresolved, owner-bound jobs, settlement
+// accounting) run in `lifecycle-fixture.ts` against the same shipped services.
 
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { execFileSync } from 'node:child_process'
@@ -65,17 +63,18 @@ async function runScenario(label: string, prompt: string, settleWindowMs = 8000)
   )
   const stderrChunks: string[] = []
   child.stderr.setEncoding('utf8')
-  child.stderr.on('data', chunk => stderrChunks.push(chunk))
+  child.stderr.on('data', (chunk: string) => { stderrChunks.push(chunk) })
   const passthrough = new Readable({ read() {} })
-  child.stdout.on('data', buffer => passthrough.push(buffer))
-  child.stdout.on('end', () => passthrough.push(null))
+  child.stdout.on('data', (buffer: Buffer) => { passthrough.push(buffer) })
+  child.stdout.on('end', () => { passthrough.push(null) })
   const stream = ndJsonStream(
-    Writable.toWeb(child.stdin) as unknown as WritableStream<Uint8Array>,
-    Readable.toWeb(passthrough) as unknown as ReadableStream<Uint8Array>,
+    Writable.toWeb(child.stdin),
+    // The passthrough is a byte stream; `toWeb` widens its element type to any.
+    Readable.toWeb(passthrough) as ReadableStream<Uint8Array>,
   )
   const app = createAcpClientApp({ name: 'task0-matrix' })
     .onNotification(methods.client.session.update, ({ params }) => {
-      events.push({ kind: 'update', at: Date.now() - t0, payload: { update: params.update as unknown } })
+      events.push({ kind: 'update', at: Date.now() - t0, payload: { update: params.update } })
     })
     .onRequest(methods.client.session.requestPermission, () =>
       Promise.resolve({ outcome: { outcome: 'cancelled' } }),
